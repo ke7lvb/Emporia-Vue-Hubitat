@@ -16,3 +16,7 @@ Multiple Emporia devices under one account is supported. The power total on the 
 
 
 This is not an official app for Emporia and the API may stop working at any time.
+
+![Sample](https://github.com/ke7lvb/Emporia-Vue-Hubitat/blob/main/Screen%20Shot%202022-03-18%20at%2010.23.16%20AM.png?raw=true)
+
+
