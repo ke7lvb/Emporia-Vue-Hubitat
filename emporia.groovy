@@ -36,7 +36,7 @@ metadata {
     }
 }
 
-def version(){ return "2.2.2" }
+def version(){ return "2.2.3" }
 
 def installed(){
     if(logEnable) log.info "Driver installed"
@@ -123,6 +123,10 @@ def refresh() {
 				name = next_value.name
                 
                 usage = next_value.usage
+				if(usage == null){
+                    if(debugLog) log.debug "null value encountered on ${name}"
+                    return;
+                }
 				Wh = convertToWh(usage) ?: 0
                 
                 if(name == "Main"){
