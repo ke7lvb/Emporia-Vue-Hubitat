@@ -5,7 +5,7 @@ metadata {
         name: "Emporia Vue Driver 2.0",
         namespace: "ke7lvb",
         author: "Ryan Lundell",
-        importUrl: "https://raw.githubusercontent.com/ke7lvb/Emporia-Vue-Hubitat/main/emporia.groovy",
+        importUrl: "",
     ){
         capability "Refresh"
         capability "PowerSource"
@@ -123,7 +123,7 @@ def refresh() {
 				name = next_value.name
                 
                 usage = next_value.usage
-				if(usage == null){
+                if(usage == null){
                     if(debugLog) log.debug "null value encountered on ${name}"
                     return;
                 }
@@ -150,8 +150,8 @@ def refresh() {
 		sendEvent(name: "energy", value: combinedTotals/1000)
 		
 		//send last updated timestamp
-		lastUpdate = JSON.deviceListUsages.instant
-		state.lastUpdate = timeToday(lastUpdate, location.timeZone)
+        now = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+		state.lastUpdate = timeToday(now)
 		sendEvent(name: "lastUpdate", value: state.lastUpdate)
     }else{
         log.info "device Gid not found. Please run the command to Get Device Gid"
@@ -161,22 +161,8 @@ def refresh() {
 def authToken(token){
     state.token = token
 
-    outputTZ = TimeZone.getTimeZone('UTC')
-    now = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'",outputTZ)
-    state.lastTokenUpdate = timeToday(now, location.timeZone)
-}
-
-def setLargeApplianceNames(applianceNames){
-    state.largeApplianceNames = applianceNames
-}
-def setSmallApplianceNames(applianceNames){
-    state.smallApplianceNames = applianceNames
-}
-def setGroup1Names(applianceNames){
-    state.group1Names = applianceNames
-}
-def setGroup2Names(applianceNames){
-    state.group2Names = applianceNames
+    now = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+    state.lastTokenUpdate = timeToday(now)
 }
 
 def convertToWh(usage){
