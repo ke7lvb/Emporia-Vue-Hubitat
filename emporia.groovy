@@ -36,7 +36,7 @@ metadata {
     }
 }
 
-def version(){ return "2.2.3" }
+def version(){ return "2.2.4" }
 
 def installed(){
     if(logEnable) log.info "Driver installed"
