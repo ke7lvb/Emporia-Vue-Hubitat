@@ -36,7 +36,7 @@ metadata {
     }
 }
 
-def version(){ return "2.2.4" }
+def version(){ return "2.3.1" }
 
 def installed(){
     if(logEnable) log.info "Driver installed"
@@ -71,7 +71,7 @@ def updated(){
 
 def getDeviceGid(){
 	host = "https://api.emporiaenergy.com/"
-    command = "/customers/devices"
+    command = "customers/devices"
 	customer = httpGet([uri: "${host}${command}", headers:['authtoken':state.token]]){resp -> def respData = resp.data}
 	if(debugLog) log.debug JsonOutput.toJson(customer.devices)
 	deviceGID = []
@@ -141,7 +141,8 @@ def refresh() {
 				
                 //create/update child device power value
                 def cd = fetchChild(name)
-                cd.parse([[name:"power", value:Wh]])
+                cd.sendEvent(name:"power", value:Wh)
+                cd.sendEvent(name:"energy", value:(Wh / 1000))
 											
 			}
 		}
@@ -187,7 +188,7 @@ def fetchChild(name){
     String thisId = device.id
     def cd = getChildDevice(name)
     if (!cd) {
-        cd = addChildDevice("hubitat", "Generic Component Power Meter", name, [name: name, isComponent: false])
+        cd = addChildDevice("hubitat", "Virtual Omni Sensor", name, [name: name, isComponent: false])
     }
     return cd 
 }
