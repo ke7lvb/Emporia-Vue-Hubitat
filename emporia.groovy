@@ -212,7 +212,7 @@ def refresh() {
                     }
                     
                     if(name == "Main" || name == "TotalUsage" || name == "Balance"){
-                    	Gid = next_value.deviceGid
+                    	def Gid = next_value.deviceGid
                     	name = name+"_"+Gid
                 	}
                     
