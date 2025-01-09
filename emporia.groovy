@@ -42,7 +42,7 @@ metadata {
     }
 }
 
-def version() { return "2.4.1" }
+def version() { return "2.4.2" }
 
 def installed() {
     if (logEnable) log.info "Driver installed"
@@ -148,7 +148,7 @@ def refreshToken() {
                     state.accessToken = responseData.AuthenticationResult.AccessToken
                     state.tokenExpiry = now() + (responseData.AuthenticationResult.ExpiresIn * 1000)
                     sendEvent(name: "tokenExpiry", value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
-                    log.info "Token refreshed successfully. New ID Token: ${state.idToken}"
+                    if (logEnable) log.info "Token refreshed successfully. New ID Token: ${state.idToken}"
                     updated() // Trigger updated to reschedule refresh
                 } else {
                     log.error "AuthenticationResult missing in refresh response. Response: ${responseData}"
@@ -228,7 +228,7 @@ def refresh() {
             log.error "Error during refresh: ${e.message}"
         }
     } else {
-        log.info "Device GID not found. Please run the command to Get Device GID"
+        log.error "Device GID not found. Please run the command to Get Device GID"
     }
 }
 
