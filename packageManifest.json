@@ -11,6 +11,13 @@
       "namespace": "ke7lvb",
       "location": "https://raw.githubusercontent.com/ke7lvb/Emporia-Vue-Hubitat/refs/heads/main/emporia.groovy",
       "required": true
+    },
+    {
+      "id": "d96024ca-a5dc-46a6-99b6-f4152db384b7",
+      "name": "Emporia Vue Child Device",
+      "namespace": "ke7lvb",
+      "location": "https://raw.githubusercontent.com/ke7lvb/Emporia-Vue-Hubitat/refs/heads/main/emporia-child.groovy",
+      "required": false
     }
   ]
 }
