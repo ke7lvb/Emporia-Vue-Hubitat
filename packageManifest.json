@@ -1,0 +1,16 @@
+{
+  "packageName": "Emporia Vue v2 Hubitat",
+  "author": "ke7lvb",
+  "version": "4.2.4",
+  "minimumHEVersion": "2.1.9",
+  "dateReleased": "2022-03-17",
+  "drivers": [
+    {
+      "id": "bd846c44-cc2e-417b-9b2f-2010388db480",
+      "name": "Emporia Vue Driver 2.x",
+      "namespace": "ke7lvb",
+      "location": "https://raw.githubusercontent.com/ke7lvb/Emporia-Vue-Hubitat/refs/heads/main/emporia.groovy",
+      "required": true
+    }
+  ]
+}
