@@ -19,6 +19,7 @@ metadata {
 
         attribute "lastUpdate", "string"
         attribute "tokenExpiry", "string"
+        attribute "unixLastUpdate", "number"
     }
     preferences {
         input name: "logEnable", type: "bool", title: "Enable Info logging", defaultValue: true
@@ -42,7 +43,7 @@ metadata {
     }
 }
 
-def version() { return "2.4.2" }
+def version() { return "2.4.4" }
 
 def installed() {
     if (logEnable) log.info "Driver installed"
@@ -77,7 +78,10 @@ def updated() {
         if (logEnable) log.info "Token refresh scheduled in ${refreshTime.toInteger()} seconds"
     }
 
+    // update displayed version
     state.version = version()
+    
+    // remove json state if not enabled
     if (!jsonState) {
         state.remove("JSON")
     }
@@ -101,24 +105,28 @@ def generateToken() {
     try {
         httpPost(params) { resp ->
             if (resp.status == 200) {
-                def responseText = resp.getData().getText('UTF-8')
-                def responseData = new JsonSlurper().parseText(responseText)
+                def responseData = resp.data   // <-- FIXED
+
                 if (responseData.AuthenticationResult) {
                     state.idToken = responseData.AuthenticationResult.IdToken
                     state.accessToken = responseData.AuthenticationResult.AccessToken
                     state.refreshToken = responseData.AuthenticationResult.RefreshToken
                     state.tokenExpiry = now() + (responseData.AuthenticationResult.ExpiresIn * 1000)
-                    sendEvent(name: "tokenExpiry", value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
+
+                    sendEvent(name: "tokenExpiry",
+                              value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
+
                     if (logEnable) log.info "Token generated successfully. ID Token: ${state.idToken}"
-                    updated() // Trigger updated to schedule refresh
+                    updated()
                 } else {
                     log.error "AuthenticationResult missing in response. Response: ${responseData}"
                 }
             } else {
                 log.error "Failed to generate token. HTTP status: ${resp.status}"
-                if (debugLog) log.debug "Response data: ${resp.getData().getText('UTF-8')}"
+                if (debugLog) log.debug "Response data: ${resp.data}"
             }
         }
+
     } catch (e) {
         log.error "Error generating token: ${e.message}"
     }
@@ -224,6 +232,7 @@ def refresh() {
             sendEvent(name: "power", value: combinedTotals)
             sendEvent(name: "energy", value: combinedTotals / 1000)
             sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
+            sendEvent(name: "unixLastUpdate", value: now())
         } catch (e) {
             log.error "Error during refresh: ${e.message}"
         }
