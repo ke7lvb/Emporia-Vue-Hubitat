@@ -43,7 +43,7 @@ metadata {
     }
 }
 
-def version() { return "2.4.4" }
+def version() { return "2.4.5" }
 
 def installed() {
     if (logEnable) log.info "Driver installed"
@@ -149,23 +149,29 @@ def refreshToken() {
     try {
         httpPost(params) { resp ->
             if (resp.status == 200) {
-                def responseText = resp.getData().getText('UTF-8')
-                def responseData = new JsonSlurper().parseText(responseText)
+                def responseData = resp.data   // <-- FIXED
+
                 if (responseData.AuthenticationResult) {
                     state.idToken = responseData.AuthenticationResult.IdToken
                     state.accessToken = responseData.AuthenticationResult.AccessToken
                     state.tokenExpiry = now() + (responseData.AuthenticationResult.ExpiresIn * 1000)
-                    sendEvent(name: "tokenExpiry", value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
+
+                    sendEvent(
+                        name: "tokenExpiry",
+                        value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+                    )
+
                     if (logEnable) log.info "Token refreshed successfully. New ID Token: ${state.idToken}"
-                    updated() // Trigger updated to reschedule refresh
+                    updated()   // reschedule refresh
                 } else {
                     log.error "AuthenticationResult missing in refresh response. Response: ${responseData}"
                 }
             } else {
                 log.error "Failed to refresh token. HTTP status: ${resp.status}"
-                if (debugLog) log.debug "Response data: ${resp.getData().getText('UTF-8')}"
+                if (debugLog) log.debug "Response data: ${resp.data}"   // <-- FIXED
             }
         }
+
     } catch (e) {
         log.error "Error refreshing token: ${e.message}"
     }
