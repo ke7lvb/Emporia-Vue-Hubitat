@@ -43,7 +43,7 @@ metadata {
     }
 }
 
-def version() { return "2.4.5" }
+def version() { return "2.4.6" }
 
 def installed() {
     if (logEnable) log.info "Driver installed"
@@ -87,6 +87,17 @@ def updated() {
     }
 }
 
+import groovy.json.JsonSlurper
+
+def parseResponseData(data) {
+    if (data instanceof InputStream) {
+        return new JsonSlurper().parse(data)
+    } else if (data instanceof String) {
+        return new JsonSlurper().parseText(data)
+    }
+    return data // already a Map, pass through
+}
+
 def generateToken() {
     def authEndpoint = "https://cognito-idp.us-east-2.amazonaws.com/"
     def headers = [
@@ -105,7 +116,7 @@ def generateToken() {
     try {
         httpPost(params) { resp ->
             if (resp.status == 200) {
-                def responseData = resp.data   // <-- FIXED
+                def responseData = parseResponseData(resp.data)
 
                 if (responseData.AuthenticationResult) {
                     state.idToken = responseData.AuthenticationResult.IdToken
@@ -149,7 +160,7 @@ def refreshToken() {
     try {
         httpPost(params) { resp ->
             if (resp.status == 200) {
-                def responseData = resp.data   // <-- FIXED
+                def responseData = parseResponseData(resp.data)
 
                 if (responseData.AuthenticationResult) {
                     state.idToken = responseData.AuthenticationResult.IdToken
@@ -168,7 +179,7 @@ def refreshToken() {
                 }
             } else {
                 log.error "Failed to refresh token. HTTP status: ${resp.status}"
-                if (debugLog) log.debug "Response data: ${resp.data}"   // <-- FIXED
+                if (debugLog) log.debug "Response data: ${resp.data}"
             }
         }
 
