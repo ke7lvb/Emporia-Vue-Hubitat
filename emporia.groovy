@@ -199,8 +199,17 @@ def getDeviceGid() {
         response.devices.each { value ->
             if (debugLog) log.debug value.deviceGid
             deviceGID.add(value.deviceGid)
-            value.devices[0].channels.each { next_value ->
-                deviceNames.add(next_value.name)
+            // Check if channels exist in nested devices array first
+            if (value.devices && value.devices.size() > 0 && value.devices[0].channels) {
+                value.devices[0].channels.each { next_value ->
+                    deviceNames.add(next_value.name)
+                }
+            } 
+            // Fall back to root-level channels (e.g., for EV chargers)
+            else if (value.channels) {
+                value.channels.each { next_value ->
+                    deviceNames.add(next_value.name)
+                }
             }
         }
         state.deviceGID = deviceGID
