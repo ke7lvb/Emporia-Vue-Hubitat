@@ -8,6 +8,18 @@
 Special thanks to @amithalp for figuring out how to authenticate directly from Hubitat. The driver no longer requires an external script.
 
 
+## What's new in 2.5
+
+- **Automatic sign-in**: enter your email and password in Preferences and save. The driver gets, refreshes and renews tokens by itself. Generate Token and Get Device GID still work, but you don't need to run them.
+- **Non-blocking refresh**: the usage request runs in the background, so a slow Emporia response doesn't hold up the hub.
+- **All Emporia scales**: 1S, 1MIN, 1H, 1D, 1W, 1Mon and 1Y. At 1S and 1MIN, `power` is watts. At 1H and longer it's the total for that period in Wh (e.g. the weekly total at 1W). `energy` is always `power` ÷ 1000.
+- **Stable child devices**: children are keyed by monitor and channel number, so renaming a circuit in Emporia no longer creates a duplicate. Two monitors with same-named circuits no longer share a device.
+- **Parent-only API calls**: only the parent device contacts Emporia. Refresh on a child does nothing; use Refresh on the parent.
+- **No tokens in the logs.**
+
+### Upgrading from 2.4 or earlier
+Update the driver code (or use Hubitat Package Manager), open the parent device and click **Save Preferences**. On the next refresh, each existing child device is re-keyed in place. It stays the same device, so rules and dashboards that use it keep working. A circuit renamed in Emporia since your last refresh will get a new child. Delete the old one by hand.
+
 Start by creating a virtual device and setting the emporia driver. Fill in the required information in Preferences, then use the Generate Token action.
 
 Once you have the token, you can retrieve the device GIDs. After that you can use Refresh to get the individual devices. It will auto-refresh based on your preferences.
