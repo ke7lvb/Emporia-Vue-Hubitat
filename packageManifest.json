@@ -1,7 +1,7 @@
 {
   "packageName": "Emporia Vue v2 Hubitat",
   "author": "ke7lvb",
-  "version": "4.2.4",
+  "version": "4.3.0",
   "minimumHEVersion": "2.1.9",
   "dateReleased": "2022-03-17",
   "drivers": [
@@ -19,5 +19,6 @@
       "location": "https://raw.githubusercontent.com/ke7lvb/Emporia-Vue-Hubitat/refs/heads/main/emporia-child.groovy",
       "required": false
     }
-  ]
+  ],
+  "releaseNotes": "Driver 2.5.0: automatic sign-in and token refresh, non-blocking refresh, correct W/kW at every scale, stable child device IDs (existing children are migrated in place), children no longer call Emporia."
 }

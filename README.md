@@ -5,30 +5,22 @@
 ̶
 ̶I̶f̶ ̶a̶n̶y̶b̶o̶d̶y̶ ̶k̶n̶o̶w̶s̶ ̶h̶o̶w̶ ̶t̶o̶ ̶a̶u̶t̶h̶e̶n̶t̶i̶c̶a̶t̶e̶ ̶t̶o̶ ̶A̶W̶S̶ ̶u̶s̶i̶n̶g̶ ̶g̶r̶o̶o̶v̶y̶,̶ ̶I̶ ̶w̶o̶u̶l̶d̶ ̶b̶e̶ ̶h̶a̶p̶p̶y̶ ̶t̶o̶ ̶e̶m̶b̶e̶d̶ ̶t̶h̶e̶ ̶a̶u̶t̶h̶e̶n̶t̶i̶c̶a̶t̶i̶o̶n̶ ̶i̶n̶t̶o̶ ̶t̶h̶i̶s̶ ̶s̶c̶r̶i̶p̶t̶.̶
 
-## New: Emporia Vue Integration app (beta)
-
-Version 3 moves from a single virtual-device driver to a Hubitat **app** with child devices.
-
-What changes:
-- **Guided setup**: enter your Emporia email and password, then pick circuits from a list. You no longer run Generate Token or Get Device GID by hand.
-- **Automatic sign-in**: tokens refresh themselves, and the app signs in again if the refresh token expires.
-- **Non-blocking polling**: Emporia requests run in the background (async HTTP), so a slow API response doesn't hold up the hub.
-- **Current draw**: `power` (W) and `energy` (kW) both show the latest 1-minute reading. `energy` is power in kW, like the 2.x driver, not a running kWh total.
-- **Stable device IDs**: each child is keyed by `deviceGid-channelNum`, so renaming a circuit in the Emporia app doesn't create a duplicate. Circuits with the same name on different monitors don't collide.
-- **One source of API calls**: only the app contacts Emporia. Child devices just receive the readings. Use the app's *Refresh now* button for an immediate update.
-- **Balance channel** and an optional **account total** device.
-
-Install (manual, until the package manifest is updated):
-1. *Drivers Code*: add `emporia-child.groovy`.
-2. *Apps Code*: add `emporia-app.groovy`.
-3. *Apps* → *Add User App* → **Emporia Vue Integration**.
-
-The legacy driver below still works. Existing installs are not changed.
-
-## Legacy driver (2.x)
-
 Special thanks to @amithalp for figuring out how to authenticate directly from Hubitat. The driver no longer requires an external script.
 
+
+## What's new in 2.5
+
+- **Automatic sign-in**: enter your email and password in Preferences and save. The driver gets, refreshes and renews tokens by itself. Generate Token and Get Device GID still work, but you don't need to run them.
+- **Non-blocking refresh**: the usage request runs in the background, so a slow Emporia response doesn't hold up the hub.
+- **Accurate readings**: `power` is the average watts over the chosen scale (1 second, 1 minute or 1 hour), and `energy` is the same value in kW.
+- **Stable child devices**: children are keyed by monitor and channel number, so renaming a circuit in Emporia no longer creates a duplicate. Two monitors with same-named circuits no longer share a device.
+- **Parent-only API calls**: only the parent device contacts Emporia. Refresh on a child does nothing; use Refresh on the parent.
+- **No tokens in the logs.**
+
+### Upgrading from 2.4 or earlier
+Update the driver code (or use Hubitat Package Manager), open the parent device and click **Save Preferences**. On the next refresh, each existing child device is re-keyed in place. It stays the same device, so rules and dashboards that use it keep working. A circuit renamed in Emporia since your last refresh will get a new child. Delete the old one by hand.
+
+If your scale was set to 1 day or longer, it now falls back to 1 hour. Those scales can't give a meaningful power reading.
 
 Start by creating a virtual device and setting the emporia driver. Fill in the required information in Preferences, then use the Generate Token action.
 

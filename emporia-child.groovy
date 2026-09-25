@@ -1,9 +1,3 @@
-/**
- *  Emporia Vue Child Device
- *
- *  One Emporia circuit (or the account total). Created by the "Emporia Vue Integration" app.
- *  This device never contacts Emporia; the app pushes readings to it on each poll.
- */
 metadata {
     definition(
         name: "Emporia Vue Child Device",
@@ -13,12 +7,18 @@ metadata {
     ){
         capability "PowerMeter"
         capability "EnergyMeter"
-        capability "Sensor"
 
         attribute "lastUpdate", "string"
+    }
+    preferences {
+
     }
 }
 
 def installed() {
-    log.info "${device.displayName} installed"
+    log.info "Driver installed"
+}
+
+def uninstalled() {
+    log.info "Driver uninstalled"
 }

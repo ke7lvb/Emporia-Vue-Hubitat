@@ -1,4 +1,13 @@
-import groovy.json.*
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import groovy.transform.Field
+
+@Field static final String API_HOST = "https://api.emporiaenergy.com"
+@Field static final String AUTH_HOST = "https://cognito-idp.us-east-2.amazonaws.com/"
+@Field static final String CLIENT_ID = "4qte47jbstod8apnfic0bunmrq"
+@Field static final String MAINS = "1,2,3"
+// Emporia reports kWh used over the scale interval; multiply by this to get average watts.
+@Field static final Map WATTS_PER_KWH = ["1S": 3600000, "1MIN": 60000, "1H": 1000]
 
 metadata {
     definition(
@@ -12,7 +21,6 @@ metadata {
         capability "PowerMeter"
         capability "EnergyMeter"
 
-        command "authToken", [[name: "Update Authtoken*", type: "STRING"]]
         command "getDeviceGid"
         command "generateToken"
         command "refreshToken"
@@ -23,12 +31,11 @@ metadata {
     }
     preferences {
         input name: "logEnable", type: "bool", title: "Enable Info logging", defaultValue: true
-        input name: "debugLog", type: "bool", title: "Enable Debug logging", defaultValue: true
-        input name: "jsonState", type: "bool", title: "Show JSON state", defaultValue: true
+        input name: "debugLog", type: "bool", title: "Enable Debug logging", defaultValue: false
+        input name: "jsonState", type: "bool", title: "Show JSON state", defaultValue: false
         input name: "email", type: "string", title: "Emporia Email", required: true
         input name: "password", type: "password", title: "Emporia Password", required: true
-        input("scale", "enum", title: "Scale", options: ["1S", "1MIN", "1H", "1D", "1W", "1Mon", "1Y"], required: true, defaultValue: "1H")
-        input("energyUnit", "enum", title: "Energy Unit", options: ["KilowattHours"/*, "Dollars", "AmpHours", "Trees", "GallonsOfGas", "MilesDriven", "Carbon"*/], required: true, defaultValue: "KilowattHours")
+        input("scale", "enum", title: "Average power over", options: ["1S": "1 second", "1MIN": "1 minute", "1H": "1 hour"], required: true, defaultValue: "1H")
         input("refresh_interval", "enum", title: "How often to refresh the Emporia data", options: [
             0: "Do NOT update",
             1: "1 Minute",
@@ -43,246 +50,216 @@ metadata {
     }
 }
 
-def version() { return "2.4.6" }
+def version() { return "2.5.0" }
 
 def installed() {
     if (logEnable) log.info "Driver installed"
     state.version = version()
     state.deviceGID = []
-    state.deviceNames = []
 }
 
 def uninstalled() {
     unschedule()
-    if(logEnable) log.info "Driver uninstalled"
+    if (logEnable) log.info "Driver uninstalled"
 }
 
 def updated() {
     if (logEnable) log.info "Settings updated"
+    unschedule()   // also clears the token-refresh timer used by versions before 2.5
 
-    // Schedule data refresh
-    if (settings.refresh_interval != "0") {
-        if (settings.refresh_interval == "60") {
-            schedule("7 0 * ? * * *", refresh, [overwrite: true])
-        } else {
-            schedule("7 */${settings.refresh_interval} * ? * *", refresh, [overwrite: true])
-        }
-    } else {
-        unschedule(refresh)
+    def interval = (settings.refresh_interval ?: "60") as String
+    if (interval == "60") {
+        schedule("7 0 * ? * *", "refresh")
+    } else if (interval != "0") {
+        schedule("7 */${interval} * ? * *", "refresh")
     }
 
-    // Schedule token refresh
-    if (state.tokenExpiry) {
-        def refreshTime = (state.tokenExpiry - now() - 300000) / 1000 // Refresh 5 minutes before expiry
-        runIn(refreshTime.toInteger(), refreshToken)
-        if (logEnable) log.info "Token refresh scheduled in ${refreshTime.toInteger()} seconds"
+    // Sign in again if the account changed
+    if (state.tokenEmail && state.tokenEmail != settings.email) {
+        state.remove("idToken")
+        state.remove("refreshToken")
+        state.deviceGID = []
     }
 
-    // update displayed version
+    // Tidy state left by earlier versions
+    ["accessToken", "deviceNames", "lastTokenUpdate"].each { state.remove(it) }
+    if (!jsonState) state.remove("JSON")
     state.version = version()
-    
-    // remove json state if not enabled
-    if (!jsonState) {
-        state.remove("JSON")
-    }
 }
 
-import groovy.json.JsonSlurper
+/* ---------------------------------------------------------------- authentication */
 
-def parseResponseData(data) {
-    if (data instanceof InputStream) {
-        return new JsonSlurper().parse(data)
-    } else if (data instanceof String) {
-        return new JsonSlurper().parseText(data)
+private Map cognito(String flow, Map authParams) {
+    def params = [
+        uri: AUTH_HOST,
+        headers: ["Content-Type": "application/x-amz-json-1.1",
+                  "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth"],
+        body: JsonOutput.toJson([AuthFlow: flow, ClientId: CLIENT_ID, AuthParameters: authParams]),
+        timeout: 20
+    ]
+    def result = null
+    try {
+        httpPost(params) { resp ->
+            def data = resp.data
+            if (data instanceof InputStream) data = new JsonSlurper().parse(data)
+            else if (data instanceof String) data = new JsonSlurper().parseText(data)
+            result = data?.AuthenticationResult
+            if (!result) log.error "${flow}: AuthenticationResult missing in response"
+        }
+    } catch (e) {
+        log.error "${flow} failed: ${e.message}"
     }
-    return data // already a Map, pass through
+    if (!result) return null
+
+    state.idToken = result.IdToken
+    if (result.RefreshToken) state.refreshToken = result.RefreshToken
+    state.tokenExpiry = now() + ((result.ExpiresIn ?: 3600) as Long) * 1000
+    state.tokenEmail = settings.email
+    sendEvent(name: "tokenExpiry", value: new Date(state.tokenExpiry as Long).format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC")))
+    return result
 }
 
 def generateToken() {
-    def authEndpoint = "https://cognito-idp.us-east-2.amazonaws.com/"
-    def headers = [
-        "Content-Type": "application/x-amz-json-1.1",
-        "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth"
-    ]
-    def body = JsonOutput.toJson([
-        AuthFlow: "USER_PASSWORD_AUTH",
-        ClientId: "4qte47jbstod8apnfic0bunmrq",
-        AuthParameters: [
-            USERNAME: settings.email,
-            PASSWORD: settings.password
-        ]
-    ])
-    def params = [uri: authEndpoint, headers: headers, body: body]
-    try {
-        httpPost(params) { resp ->
-            if (resp.status == 200) {
-                def responseData = parseResponseData(resp.data)
-
-                if (responseData.AuthenticationResult) {
-                    state.idToken = responseData.AuthenticationResult.IdToken
-                    state.accessToken = responseData.AuthenticationResult.AccessToken
-                    state.refreshToken = responseData.AuthenticationResult.RefreshToken
-                    state.tokenExpiry = now() + (responseData.AuthenticationResult.ExpiresIn * 1000)
-
-                    sendEvent(name: "tokenExpiry",
-                              value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
-
-                    if (logEnable) log.info "Token generated successfully"
-                    updated()
-                } else {
-                    log.error "AuthenticationResult missing in response. Response: ${responseData}"
-                }
-            } else {
-                log.error "Failed to generate token. HTTP status: ${resp.status}"
-                if (debugLog) log.debug "Response data: ${resp.data}"
-            }
-        }
-
-    } catch (e) {
-        log.error "Error generating token: ${e.message}"
+    if (cognito("USER_PASSWORD_AUTH", [USERNAME: settings.email, PASSWORD: settings.password])) {
+        if (logEnable) log.info "Signed in to Emporia"
+        return true
     }
+    return false
 }
 
 def refreshToken() {
-    def authEndpoint = "https://cognito-idp.us-east-2.amazonaws.com/"
-    def headers = [
-        "Content-Type": "application/x-amz-json-1.1",
-        "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth"
-    ]
-    def body = JsonOutput.toJson([
-        AuthFlow: "REFRESH_TOKEN_AUTH",
-        ClientId: "4qte47jbstod8apnfic0bunmrq",
-        AuthParameters: [
-            REFRESH_TOKEN: state.refreshToken
-        ]
-    ])
-    def params = [uri: authEndpoint, headers: headers, body: body]
-    try {
-        httpPost(params) { resp ->
-            if (resp.status == 200) {
-                def responseData = parseResponseData(resp.data)
-
-                if (responseData.AuthenticationResult) {
-                    state.idToken = responseData.AuthenticationResult.IdToken
-                    state.accessToken = responseData.AuthenticationResult.AccessToken
-                    state.tokenExpiry = now() + (responseData.AuthenticationResult.ExpiresIn * 1000)
-
-                    sendEvent(
-                        name: "tokenExpiry",
-                        value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'")
-                    )
-
-                    if (logEnable) log.info "Token refreshed successfully"
-                    updated()   // reschedule refresh
-                } else {
-                    log.error "AuthenticationResult missing in refresh response. Response: ${responseData}"
-                }
-            } else {
-                log.error "Failed to refresh token. HTTP status: ${resp.status}"
-                if (debugLog) log.debug "Response data: ${resp.data}"
-            }
-        }
-
-    } catch (e) {
-        log.error "Error refreshing token: ${e.message}"
+    if (state.refreshToken && cognito("REFRESH_TOKEN_AUTH", [REFRESH_TOKEN: state.refreshToken])) {
+        if (debugLog) log.debug "Token refreshed"
+        return true
     }
+    return false
 }
 
+/** Makes sure a valid token is available: reuse it, refresh it, or sign in again. */
+boolean ensureToken() {
+    if (state.idToken && (state.tokenExpiry ?: 0) > now() + 300000) return true
+    return refreshToken() || generateToken()
+}
+
+private Map apiParams(String path, Map query = null) {
+    def p = [uri: API_HOST, path: path, headers: [authtoken: state.idToken], contentType: "application/json", timeout: 30]
+    if (query) p.query = query
+    return p
+}
+
+/* ---------------------------------------------------------------- devices */
+
 def getDeviceGid() {
-    def host = "https://api.emporiaenergy.com/"
-    def command = "customers/devices"
+    if (!ensureToken()) {
+        log.error "Unable to sign in to Emporia; check your email and password"
+        return
+    }
     try {
-        def response = httpGet([uri: "${host}${command}", headers: ['authtoken': state.idToken]]) { resp -> resp.data }
-        if (debugLog) log.debug JsonOutput.toJson(response.devices)
-        def deviceGID = []
-        def deviceNames = []
-        response.devices.each { value ->
-            if (debugLog) log.debug value.deviceGid
-            deviceGID.add(value.deviceGid)
-            value.devices[0].channels.each { next_value ->
-                deviceNames.add(next_value.name)
-            }
+        httpGet(apiParams("/customers/devices")) { resp ->
+            state.deviceGID = resp.data?.devices?.collect { it.deviceGid } ?: []
         }
-        state.deviceGID = deviceGID
-        state.deviceNames = deviceNames - null - ''
+        if (logEnable) log.info "Found Emporia devices: ${state.deviceGID}"
     } catch (e) {
         log.error "Error fetching device GID: ${e.message}"
     }
 }
 
+/* ---------------------------------------------------------------- polling */
+
 def refresh() {
-    if (state.deviceGID) {
-        def Gid_string = state.deviceGID.join("+")
-        def outputTZ = TimeZone.getTimeZone('UTC')
-        def instant = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", outputTZ)
+    if (!ensureToken()) {
+        log.error "Unable to sign in to Emporia; check your email and password"
+        return
+    }
+    if (!state.deviceGID) getDeviceGid()
+    if (!state.deviceGID) {
+        log.error "No Emporia devices found on this account"
+        return
+    }
 
-        def host = "https://api.emporiaenergy.com/"
-        def command = "AppAPI?apiMethod=getDeviceListUsages&deviceGids=${Gid_string}&instant=${instant}&scale=${scale}&energyUnit=${energyUnit}"
-        if (debugLog) log.debug "${host}${command}"
+    def query = [
+        apiMethod: "getDeviceListUsages",
+        deviceGids: state.deviceGID.join("+"),
+        instant: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC")),
+        scale: activeScale(),
+        energyUnit: "KilowattHours"
+    ]
+    if (debugLog) log.debug "Requesting usage: ${query}"
+    asynchttpGet("handleUsage", apiParams("/AppAPI", query))
+}
+
+private String activeScale() {
+    return WATTS_PER_KWH.containsKey(settings.scale) ? settings.scale : "1H"
+}
+
+def handleUsage(resp, data) {
+    if (resp.status == 401) {
+        log.warn "Emporia rejected the token; will sign in again on the next refresh"
+        state.tokenExpiry = 0
+        return
+    }
+    if (resp.hasError()) {
+        log.error "Error during refresh (${resp.status}): ${resp.getErrorMessage()}"
+        return
+    }
+    if (jsonState) state.JSON = resp.data
+
+    def multiplier = WATTS_PER_KWH[activeScale()]
+    BigDecimal combinedTotals = 0
+
+    resp.json?.deviceListUsages?.devices?.each { dev ->
+        dev.channelUsages?.each { cu ->
+            if (debugLog) log.debug cu
+            if (cu.usage == null) return   // monitor offline or interval not reported yet
+            BigDecimal watts = ((cu.usage as BigDecimal) * multiplier).setScale(0, java.math.RoundingMode.HALF_UP)
+            if (cu.channelNum == MAINS) combinedTotals += watts
+
+            def cd = fetchChild(cu)
+            cd?.sendEvent(name: "power", value: watts, unit: "W")
+            cd?.sendEvent(name: "energy", value: watts / 1000, unit: "kW")
+        }
+    }
+
+    sendEvent(name: "power", value: combinedTotals, unit: "W")
+    sendEvent(name: "energy", value: combinedTotals / 1000, unit: "kW")
+    sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
+    sendEvent(name: "unixLastUpdate", value: now())
+}
+
+/**
+ * Children are keyed "<deviceGid>-<channelNum>" so renaming a circuit in Emporia, or two monitors
+ * having circuits with the same name, doesn't create or merge devices. Children created by versions
+ * before 2.5 were keyed by circuit name; those are re-keyed in place, so rules and dashboards that
+ * use them keep working.
+ */
+def fetchChild(cu) {
+    String dni = "${cu.deviceGid}-${cu.channelNum}"
+    def cd = getChildDevice(dni)
+    if (cd) return cd
+
+    String legacyDni = cu.name in ["Main", "TotalUsage", "Balance"] ? "${cu.name}_${cu.deviceGid}" : cu.name
+    cd = legacyDni ? getChildDevice(legacyDni) : null
+    if (cd) {
         try {
-            def JSON = httpGet([uri: "${host}${command}", headers: ['authtoken': state.idToken]]) { resp -> resp.data }
-            if (jsonState) {
-                state.JSON = JsonOutput.toJson(JSON)
-            }
-            def devices = JSON.deviceListUsages.devices
-            def combinedTotals = 0
-            devices.each { value ->
-                value.channelUsages.each { next_value ->
-                    if (debugLog) log.debug next_value
-                    def name = next_value.name
-                    def usage = next_value.usage ?: 0
-                    def Wh = convertToWh(usage)
-                    if (name == "Main") {
-                        combinedTotals += Wh
-                    }
-                    
-                    if(name == "Main" || name == "TotalUsage" || name == "Balance"){
-                    	def Gid = next_value.deviceGid
-                    	name = name+"_"+Gid
-                	}
-                    
-                    def cd = fetchChild(name)
-                    cd.sendEvent(name: "power", value: Wh)
-                    cd.sendEvent(name: "energy", value: (Wh / 1000))
-                }
-            }
-            sendEvent(name: "power", value: combinedTotals)
-            sendEvent(name: "energy", value: combinedTotals / 1000)
-            sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
-            sendEvent(name: "unixLastUpdate", value: now())
+            cd.setDeviceNetworkId(dni)
+            if (logEnable) log.info "Migrated ${cd.displayName} from '${legacyDni}' to '${dni}'"
         } catch (e) {
-            log.error "Error during refresh: ${e.message}"
+            log.warn "Could not migrate ${cd.displayName} to '${dni}': ${e.message}"
         }
-    } else {
-        log.error "Device GID not found. Please run the command to Get Device GID"
+        return cd
     }
-}
 
-def authToken(token) {
-    state.idToken = token
-    now = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
-    state.lastTokenUpdate = timeToday(now)
-}
-
-def convertToWh(usage) {
-    if (usage != null) {
-        switch (scale) {
-            case "1S":
-                return Math.round(usage * 60 * 60 * 1000)
-            case "1MIN":
-                return Math.round(usage * 60 * 1000)
-            default:
-                return Math.round(usage * 1000)
-        }
-    }
-    return 0
-}
-
-def fetchChild(name) {
-    String thisId = device.id
-    def cd = getChildDevice(name)
-    if (!cd) {
-        cd = addChildDevice("hubitat", "Generic Component Power Meter", name, [name: name, isComponent: false])
+    String name = cu.name ?: "Channel ${cu.channelNum}"
+    try {
+        cd = addChildDevice("hubitat", "Generic Component Power Meter", dni, [name: name, isComponent: false])
+        if (logEnable) log.info "Created child device ${name}"
+    } catch (e) {
+        log.error "Could not create child device ${name}: ${e.message}"
     }
     return cd
+}
+
+/** Refresh on a child device lands here. Children never call Emporia; only the parent refresh does. */
+def componentRefresh(cd) {
+    if (logEnable) log.info "${cd.displayName} is updated by ${device.displayName}; use Refresh on the parent device"
 }
