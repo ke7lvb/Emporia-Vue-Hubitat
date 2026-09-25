@@ -6,8 +6,9 @@ import groovy.transform.Field
 @Field static final String AUTH_HOST = "https://cognito-idp.us-east-2.amazonaws.com/"
 @Field static final String CLIENT_ID = "4qte47jbstod8apnfic0bunmrq"
 @Field static final String MAINS = "1,2,3"
-// Emporia reports kWh used over the scale interval; multiply by this to get average watts.
-@Field static final Map WATTS_PER_KWH = ["1S": 3600000, "1MIN": 60000, "1H": 1000]
+// Emporia reports kWh used over the scale interval. For 1S and 1MIN, scale that up to watts;
+// for 1H and longer, report the interval's total as-is (Wh on "power", kWh on "energy").
+@Field static final Map MULTIPLIER = ["1S": 3600000, "1MIN": 60000]
 
 metadata {
     definition(
@@ -35,7 +36,7 @@ metadata {
         input name: "jsonState", type: "bool", title: "Show JSON state", defaultValue: false
         input name: "email", type: "string", title: "Emporia Email", required: true
         input name: "password", type: "password", title: "Emporia Password", required: true
-        input("scale", "enum", title: "Average power over", options: ["1S": "1 second", "1MIN": "1 minute", "1H": "1 hour"], required: true, defaultValue: "1H")
+        input("scale", "enum", title: "Scale", options: ["1S", "1MIN", "1H", "1D", "1W", "1Mon", "1Y"], required: true, defaultValue: "1H")
         input("refresh_interval", "enum", title: "How often to refresh the Emporia data", options: [
             0: "Do NOT update",
             1: "1 Minute",
@@ -181,15 +182,11 @@ def refresh() {
         apiMethod: "getDeviceListUsages",
         deviceGids: state.deviceGID.join("+"),
         instant: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC")),
-        scale: activeScale(),
+        scale: settings.scale ?: "1H",
         energyUnit: "KilowattHours"
     ]
     if (debugLog) log.debug "Requesting usage: ${query}"
     asynchttpGet("handleUsage", apiParams("/AppAPI", query))
-}
-
-private String activeScale() {
-    return WATTS_PER_KWH.containsKey(settings.scale) ? settings.scale : "1H"
 }
 
 def handleUsage(resp, data) {
@@ -204,24 +201,24 @@ def handleUsage(resp, data) {
     }
     if (jsonState) state.JSON = resp.data
 
-    def multiplier = WATTS_PER_KWH[activeScale()]
+    def multiplier = MULTIPLIER[settings.scale] ?: 1000
     BigDecimal combinedTotals = 0
 
     resp.json?.deviceListUsages?.devices?.each { dev ->
         dev.channelUsages?.each { cu ->
             if (debugLog) log.debug cu
             if (cu.usage == null) return   // monitor offline or interval not reported yet
-            BigDecimal watts = ((cu.usage as BigDecimal) * multiplier).setScale(0, java.math.RoundingMode.HALF_UP)
-            if (cu.channelNum == MAINS) combinedTotals += watts
+            BigDecimal value = ((cu.usage as BigDecimal) * multiplier).setScale(0, java.math.RoundingMode.HALF_UP)
+            if (cu.channelNum == MAINS) combinedTotals += value
 
             def cd = fetchChild(cu)
-            cd?.sendEvent(name: "power", value: watts, unit: "W")
-            cd?.sendEvent(name: "energy", value: watts / 1000, unit: "kW")
+            cd?.sendEvent(name: "power", value: value)
+            cd?.sendEvent(name: "energy", value: value / 1000)
         }
     }
 
-    sendEvent(name: "power", value: combinedTotals, unit: "W")
-    sendEvent(name: "energy", value: combinedTotals / 1000, unit: "kW")
+    sendEvent(name: "power", value: combinedTotals)
+    sendEvent(name: "energy", value: combinedTotals / 1000)
     sendEvent(name: "lastUpdate", value: new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
     sendEvent(name: "unixLastUpdate", value: now())
 }

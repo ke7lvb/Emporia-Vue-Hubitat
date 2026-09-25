@@ -20,5 +20,5 @@
       "required": false
     }
   ],
-  "releaseNotes": "Driver 2.5.0: automatic sign-in and token refresh, non-blocking refresh, correct W/kW at every scale, stable child device IDs (existing children are migrated in place), children no longer call Emporia."
+  "releaseNotes": "Driver 2.5.0: automatic sign-in and token refresh, non-blocking refresh, stable child device IDs (existing children are migrated in place), children no longer call Emporia."
 }
