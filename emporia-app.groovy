@@ -3,10 +3,11 @@
  *
  *  Replaces the single virtual-device driver with an app that:
  *   - handles login / token refresh automatically (no manual "Generate Token")
- *   - discovers Vue monitors, circuits and smart plugs and lets you pick which to add
+ *   - discovers Vue monitors and circuits and lets you pick which to add
  *   - polls asynchronously so the hub is never blocked waiting on Emporia
  *   - reports true power (W) and energy (kWh) separately
- *   - lets you switch Emporia smart plugs on and off
+ *
+ *  The app is the only thing that talks to Emporia; child devices just receive the data.
  *
  *  This is not an official Emporia integration; the cloud API may change at any time.
  */
@@ -19,7 +20,6 @@ import groovy.transform.Field
 @Field static final String CLIENT_ID = "4qte47jbstod8apnfic0bunmrq"
 @Field static final String NAMESPACE = "ke7lvb"
 @Field static final String CHANNEL_DRIVER = "Emporia Vue Child Device"
-@Field static final String PLUG_DRIVER = "Emporia Smart Plug"
 @Field static final String TOTAL_DNI = "emporia-total"
 @Field static final String MAINS = "1,2,3"
 
@@ -27,7 +27,7 @@ definition(
     name: "Emporia Vue Integration",
     namespace: NAMESPACE,
     author: "Ryan Lundell",
-    description: "Energy monitoring and smart plug control for Emporia Vue",
+    description: "Energy monitoring for Emporia Vue",
     category: "Green Living",
     singleInstance: true,
     iconUrl: "",
@@ -62,6 +62,9 @@ def mainPage() {
                 "1D": "Today", "1W": "This week", "1Mon": "This month", "1Y": "This year"
             ]
         }
+        if (app.installationState == "COMPLETE") {
+            section { input "refreshNow", "button", title: "Refresh now" }
+        }
         section("Logging") {
             input "logEnable", "bool", title: "Enable info logging", defaultValue: true
             input "debugLog", "bool", title: "Enable debug logging", defaultValue: false
@@ -76,7 +79,7 @@ def devicesPage() {
             section { paragraph "No Emporia devices found. Go back and check your sign-in." }
             return
         }
-        section("Circuits and smart plugs") {
+        section("Circuits") {
             input "selected", "enum", title: "Create Hubitat devices for", multiple: true, required: false,
                 options: found.collectEntries { k, v -> [(k): v.label] }.sort { it.value }
             input "createTotal", "bool", title: "Also create an account-total device (sum of all Vue mains)", defaultValue: true
@@ -122,12 +125,11 @@ def syncChildDevices() {
     wanted.each { key ->
         def info = catalog[key]
         if (!info || getChildDevice(key)) return
-        def driver = info.type == "outlet" ? PLUG_DRIVER : CHANNEL_DRIVER
         try {
-            addChildDevice(NAMESPACE, driver, key, [name: driver, label: info.label, isComponent: false])
+            addChildDevice(NAMESPACE, CHANNEL_DRIVER, key, [name: CHANNEL_DRIVER, label: info.label, isComponent: false])
             if (logEnable) log.info "Created ${info.label}"
         } catch (e) {
-            log.error "Could not create ${info.label}: is the '${driver}' driver installed? ${e.message}"
+            log.error "Could not create ${info.label}: is the '${CHANNEL_DRIVER}' driver installed? ${e.message}"
         }
     }
 
@@ -193,7 +195,7 @@ private Map apiParams(String path, Map query = null) {
 
 /* ---------------------------------------------------------------- discovery */
 
-/** Fetches the device tree and returns key -> [label, type, gid, channelNum, outlet]. */
+/** Fetches the device tree and returns key -> [label, gid, channelNum, top]. */
 Map discover() {
     if (!ensureToken()) return [:]
     def catalog = [:]
@@ -212,18 +214,15 @@ private void addToCatalog(Map catalog, Map dev, String parentName) {
     def gid = dev.deviceGid
     def name = dev.locationProperties?.deviceName ?: (parentName ? "${parentName} device ${gid}" : "Emporia ${gid}")
 
-    if (dev.outlet != null) {
-        catalog["${gid}-${MAINS}"] = [label: "${name} (plug)", type: "outlet", gid: gid, channelNum: MAINS, outlet: dev.outlet]
-    } else {
-        def channels = dev.channels ?: []
-        channels.each { ch ->
-            def num = ch.channelNum as String
-            def chName = ch.name ?: (num == MAINS ? "Mains" : "Channel ${num}")
-            catalog["${gid}-${num}"] = [label: "${name} - ${chName}", type: "channel", gid: gid, channelNum: num]
-        }
-        if (channels.size() > 1 && channels.any { it.channelNum == MAINS }) {
-            catalog["${gid}-Balance"] = [label: "${name} - Balance (unmonitored)", type: "channel", gid: gid, channelNum: "Balance"]
-        }
+    boolean top = parentName == null
+    def channels = dev.channels ?: []
+    channels.each { ch ->
+        def num = ch.channelNum as String
+        def chName = ch.name ?: (num == MAINS ? "Mains" : "Channel ${num}")
+        catalog["${gid}-${num}"] = [label: "${name} - ${chName}", gid: gid, channelNum: num, top: top]
+    }
+    if (channels.size() > 1 && channels.any { it.channelNum == MAINS }) {
+        catalog["${gid}-Balance"] = [label: "${name} - Balance (unmonitored)", gid: gid, channelNum: "Balance", top: top]
     }
     dev.devices?.each { addToCatalog(catalog, it, name) }
 }
@@ -236,7 +235,8 @@ def poll() {
         log.error "Unable to authenticate with Emporia; skipping refresh"
         return
     }
-    def gids = (state.catalog ?: [:]).values()*.gid.unique()
+    // Only top-level monitors are queried; anything nested under them arrives in nestedDevices.
+    def gids = (state.catalog ?: [:]).values().findAll { it.top }*.gid.unique()
     if (!gids) return
 
     def instant = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC"))
@@ -244,9 +244,6 @@ def poll() {
         def query = [apiMethod: "getDeviceListUsages", deviceGids: gids.join("+"), instant: instant,
                      scale: scale, energyUnit: "KilowattHours"]
         asynchttpGet("handleUsage", apiParams("/AppAPI", query), [scale: scale])
-    }
-    if (getChildDevices().any { it.typeName == PLUG_DRIVER }) {
-        asynchttpGet("handleDevices", apiParams("/customers/devices"))
     }
 }
 
@@ -257,15 +254,11 @@ def handleUsage(resp, data) {
     BigDecimal total = 0
     String stamp = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC"))
 
-    def catalog = state.catalog ?: [:]
-    def seen = [] as Set
-
-    // Nested plugs can show up both on their own and under their parent Vue; handle each once.
     walkUsage(usages, 0) { cu, depth ->
+        if (cu.usage == null) return      // device offline or minute not yet reported
         String key = "${cu.deviceGid}-${cu.channelNum}"
-        if (cu.usage == null || !seen.add(key)) return   // offline / minute not reported yet / duplicate
         BigDecimal kWh = cu.usage as BigDecimal
-        if (depth == 0 && cu.channelNum == MAINS && catalog[key]?.type == "channel") total += kWh
+        if (depth == 0 && cu.channelNum == MAINS) total += kWh
 
         def cd = getChildDevice(key)
         if (cd) publish(cd, isPower, kWh, stamp)
@@ -294,21 +287,6 @@ private void publish(cd, boolean isPower, BigDecimal kWh, String stamp) {
     }
 }
 
-def handleDevices(resp, data) {
-    if (!responseOk(resp, "device list")) return
-    def outlets = [:]
-    def collect
-    collect = { List devs -> devs?.each { d -> if (d.outlet != null) outlets[d.deviceGid] = d.outlet; collect(d.devices) } }
-    collect(resp.json?.devices)
-    def catalog = state.catalog ?: [:]
-    outlets.each { gid, outlet ->
-        String key = "${gid}-${MAINS}"
-        getChildDevice(key)?.sendEvent(name: "switch", value: outlet.outletOn ? "on" : "off")
-        if (catalog[key]) catalog[key].outlet = outlet
-    }
-    state.catalog = catalog   // nested edits to state maps are not persisted unless reassigned
-}
-
 private boolean responseOk(resp, String what) {
     if (resp.status == 401) {
         log.warn "Emporia rejected the token while fetching ${what}; will re-authenticate next poll"
@@ -322,25 +300,8 @@ private boolean responseOk(resp, String what) {
     return true
 }
 
-/* ---------------------------------------------------------------- child callbacks */
+/* ---------------------------------------------------------------- buttons */
 
-def componentRefresh(cd) { poll() }
-
-def setOutlet(cd, boolean on) {
-    def info = state.catalog?."${cd.deviceNetworkId}"
-    if (!info || !ensureToken()) {
-        log.error "Cannot switch ${cd.displayName}: unknown plug or not signed in"
-        return
-    }
-    def body = (info.outlet ?: [deviceGid: info.gid]) + [outletOn: on]
-    def params = apiParams("/devices/outlet") + [requestContentType: "application/json", body: JsonOutput.toJson(body)]
-    asynchttpPut("handleOutlet", params, [dni: cd.deviceNetworkId, on: on])
-}
-
-def handleOutlet(resp, data) {
-    if (!responseOk(resp, "outlet update")) return
-    def cd = getChildDevice(data.dni)
-    def on = resp.json?.outletOn != null ? resp.json.outletOn : data.on
-    cd?.sendEvent(name: "switch", value: on ? "on" : "off")
-    if (logEnable) log.info "${cd?.displayName} turned ${on ? 'on' : 'off'}"
+def appButtonHandler(String btn) {
+    if (btn == "refreshNow") poll()
 }
