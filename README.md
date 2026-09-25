@@ -5,6 +5,28 @@
 ̶
 ̶I̶f̶ ̶a̶n̶y̶b̶o̶d̶y̶ ̶k̶n̶o̶w̶s̶ ̶h̶o̶w̶ ̶t̶o̶ ̶a̶u̶t̶h̶e̶n̶t̶i̶c̶a̶t̶e̶ ̶t̶o̶ ̶A̶W̶S̶ ̶u̶s̶i̶n̶g̶ ̶g̶r̶o̶o̶v̶y̶,̶ ̶I̶ ̶w̶o̶u̶l̶d̶ ̶b̶e̶ ̶h̶a̶p̶p̶y̶ ̶t̶o̶ ̶e̶m̶b̶e̶d̶ ̶t̶h̶e̶ ̶a̶u̶t̶h̶e̶n̶t̶i̶c̶a̶t̶i̶o̶n̶ ̶i̶n̶t̶o̶ ̶t̶h̶i̶s̶ ̶s̶c̶r̶i̶p̶t̶.̶
 
+## New: Emporia Vue Integration app (beta)
+
+Version 3 moves from a single virtual-device driver to a Hubitat **app** with child devices.
+
+What changes:
+- **Guided setup**: enter your Emporia email and password, then pick circuits and smart plugs from a list. You no longer run Generate Token or Get Device GID by hand.
+- **Automatic sign-in**: tokens refresh themselves, and the app signs in again if the refresh token expires.
+- **Non-blocking polling**: Emporia requests run in the background (async HTTP), so a slow API response doesn't hold up the hub.
+- **Correct units**: power (W) comes from 1-minute data. Energy (kWh) builds up over today, this week, this month or this year.
+- **Stable device IDs**: each child is keyed by `deviceGid-channelNum`, so renaming a circuit in the Emporia app doesn't create a duplicate. Circuits with the same name on different monitors don't collide.
+- **Smart plugs**: Emporia outlets show up as switches you can turn on and off from Hubitat.
+- **Balance channel** and an optional **account total** device.
+
+Install (manual, until the package manifest is updated):
+1. *Drivers Code*: add `emporia-child.groovy` and `emporia-plug.groovy`.
+2. *Apps Code*: add `emporia-app.groovy`.
+3. *Apps* → *Add User App* → **Emporia Vue Integration**.
+
+The legacy driver below still works. Existing installs are not changed.
+
+## Legacy driver (2.x)
+
 Special thanks to @amithalp for figuring out how to authenticate directly from Hubitat. The driver no longer requires an external script.
 
 

@@ -1,3 +1,8 @@
+/**
+ *  Emporia Vue Child Device
+ *
+ *  One Emporia circuit (or the account total). Created by the "Emporia Vue Integration" app.
+ */
 metadata {
     definition(
         name: "Emporia Vue Child Device",
@@ -7,18 +12,17 @@ metadata {
     ){
         capability "PowerMeter"
         capability "EnergyMeter"
+        capability "Refresh"
+        capability "Sensor"
 
         attribute "lastUpdate", "string"
-    }
-    preferences {
-
     }
 }
 
 def installed() {
-    log.info "Driver installed"
+    log.info "${device.displayName} installed"
 }
 
-def uninstalled() {
-    log.info "Driver uninstalled"
+def refresh() {
+    parent?.componentRefresh(device)
 }

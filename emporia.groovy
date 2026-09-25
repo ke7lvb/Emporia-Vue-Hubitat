@@ -127,7 +127,7 @@ def generateToken() {
                     sendEvent(name: "tokenExpiry",
                               value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'"))
 
-                    if (logEnable) log.info "Token generated successfully. ID Token: ${state.idToken}"
+                    if (logEnable) log.info "Token generated successfully"
                     updated()
                 } else {
                     log.error "AuthenticationResult missing in response. Response: ${responseData}"
@@ -172,7 +172,7 @@ def refreshToken() {
                         value: new Date(state.tokenExpiry).format("yyyy-MM-dd'T'HH:mm:ss'Z'")
                     )
 
-                    if (logEnable) log.info "Token refreshed successfully. New ID Token: ${state.idToken}"
+                    if (logEnable) log.info "Token refreshed successfully"
                     updated()   // reschedule refresh
                 } else {
                     log.error "AuthenticationResult missing in refresh response. Response: ${responseData}"
