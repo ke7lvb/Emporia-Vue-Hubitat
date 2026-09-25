@@ -13,7 +13,7 @@ What changes:
 - **Guided setup**: enter your Emporia email and password, then pick circuits from a list. You no longer run Generate Token or Get Device GID by hand.
 - **Automatic sign-in**: tokens refresh themselves, and the app signs in again if the refresh token expires.
 - **Non-blocking polling**: Emporia requests run in the background (async HTTP), so a slow API response doesn't hold up the hub.
-- **Correct units**: power (W) comes from 1-minute data. Energy (kWh) builds up over today, this week, this month or this year.
+- **Current draw**: `power` (W) and `energy` (kW) both show the latest 1-minute reading. `energy` is power in kW, like the 2.x driver, not a running kWh total.
 - **Stable device IDs**: each child is keyed by `deviceGid-channelNum`, so renaming a circuit in the Emporia app doesn't create a duplicate. Circuits with the same name on different monitors don't collide.
 - **One source of API calls**: only the app contacts Emporia. Child devices just receive the readings. Use the app's *Refresh now* button for an immediate update.
 - **Balance channel** and an optional **account total** device.

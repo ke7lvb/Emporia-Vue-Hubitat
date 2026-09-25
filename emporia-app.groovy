@@ -5,7 +5,7 @@
  *   - handles login / token refresh automatically (no manual "Generate Token")
  *   - discovers Vue monitors and circuits and lets you pick which to add
  *   - polls asynchronously so the hub is never blocked waiting on Emporia
- *   - reports true power (W) and energy (kWh) separately
+ *   - reports current power as W ("power") and kW ("energy")
  *
  *  The app is the only thing that talks to Emporia; child devices just receive the data.
  *
@@ -57,9 +57,6 @@ def mainPage() {
             input "pollInterval", "enum", title: "Refresh every", defaultValue: "1", required: true, options: [
                 "0": "Never (manual refresh only)", "1": "1 minute", "5": "5 minutes", "10": "10 minutes",
                 "15": "15 minutes", "30": "30 minutes", "60": "1 hour"
-            ]
-            input "energyScale", "enum", title: "Energy (kWh) accumulates over", defaultValue: "1D", required: true, options: [
-                "1D": "Today", "1W": "This week", "1Mon": "This month", "1Y": "This year"
             ]
         }
         if (app.installationState == "COMPLETE") {
@@ -240,17 +237,14 @@ def poll() {
     if (!gids) return
 
     def instant = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC"))
-    [ "1MIN", (settings.energyScale ?: "1D") ].each { scale ->
-        def query = [apiMethod: "getDeviceListUsages", deviceGids: gids.join("+"), instant: instant,
-                     scale: scale, energyUnit: "KilowattHours"]
-        asynchttpGet("handleUsage", apiParams("/AppAPI", query), [scale: scale])
-    }
+    def query = [apiMethod: "getDeviceListUsages", deviceGids: gids.join("+"), instant: instant,
+                 scale: "1MIN", energyUnit: "KilowattHours"]
+    asynchttpGet("handleUsage", apiParams("/AppAPI", query))
 }
 
 def handleUsage(resp, data) {
     if (!responseOk(resp, "usage")) return
     def usages = resp.json?.deviceListUsages?.devices ?: []
-    boolean isPower = data.scale == "1MIN"
     BigDecimal total = 0
     String stamp = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'", TimeZone.getTimeZone("UTC"))
 
@@ -261,11 +255,11 @@ def handleUsage(resp, data) {
         if (depth == 0 && cu.channelNum == MAINS) total += kWh
 
         def cd = getChildDevice(key)
-        if (cd) publish(cd, isPower, kWh, stamp)
+        if (cd) publish(cd, kWh, stamp)
     }
 
     def totalDev = getChildDevice(TOTAL_DNI)
-    if (totalDev) publish(totalDev, isPower, total, stamp)
+    if (totalDev) publish(totalDev, total, stamp)
 }
 
 private void walkUsage(List devices, int depth, Closure visit) {
@@ -277,14 +271,12 @@ private void walkUsage(List devices, int depth, Closure visit) {
     }
 }
 
-private void publish(cd, boolean isPower, BigDecimal kWh, String stamp) {
-    if (isPower) {
-        // kWh used over one minute -> average watts during that minute
-        cd.sendEvent(name: "power", value: (kWh * 60000).setScale(0, java.math.RoundingMode.HALF_UP), unit: "W")
-        cd.sendEvent(name: "lastUpdate", value: stamp)
-    } else {
-        cd.sendEvent(name: "energy", value: kWh.setScale(3, java.math.RoundingMode.HALF_UP), unit: "kWh")
-    }
+private void publish(cd, BigDecimal kWh, String stamp) {
+    // kWh used over the last minute -> average draw during that minute
+    BigDecimal watts = (kWh * 60000).setScale(0, java.math.RoundingMode.HALF_UP)
+    cd.sendEvent(name: "power", value: watts, unit: "W")
+    cd.sendEvent(name: "energy", value: (watts / 1000).setScale(3, java.math.RoundingMode.HALF_UP), unit: "kW")
+    cd.sendEvent(name: "lastUpdate", value: stamp)
 }
 
 private boolean responseOk(resp, String what) {
